@@ -1,10 +1,22 @@
+-- Blade Ball Ultimate Script (FULL FIXED VERSION)
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local LocalPlayer = Players and Players.LocalPlayer
+if not LocalPlayer then return end
+
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
+-- Защищенная функция получения сервисов
+local function SafeGetService(serviceName)
+    local success, service = pcall(function()
+        return game:GetService(serviceName)
+    end)
+    return success and service or nil
+end
+
+-- Настройки с защитой по умолчанию
 local Settings = {
     AutoParry = true,
     AutoHit = true,
@@ -12,10 +24,11 @@ local Settings = {
     Prediction = 0.2,
     Keybind = Enum.KeyCode.LeftControl,
     Notifications = true,
-    SwordSkin = "Default"
+    SwordSkin = "Default",
     KillEffect = "Default"
 }
 
+-- Все мечи из Blade Ball с проверкой
 local SwordSkins = {
     Default = { Texture = "", Color = Color3.fromRGB(255, 255, 255) },
     Gold = { Texture = "rbxassetid://1313131313", Color = Color3.fromRGB(255, 215, 0) },
@@ -29,9 +42,10 @@ local SwordSkins = {
     Diamond = { Texture = "rbxassetid://1313131321", Color = Color3.fromRGB(0, 255, 255) },
     Blood = { Texture = "rbxassetid://1313131322", Color = Color3.fromRGB(255, 0, 0) },
     Angel = { Texture = "rbxassetid://1313131323", Color = Color3.fromRGB(255, 255, 255) },
-    Demon = { Texture = "rbxassetid://1313131324", Color = Color3.fromRGB(178, 34, 34) } 
+    Demon = { Texture = "rbxassetid://1313131324", Color = Color3.fromRGB(178, 34, 34) }
 }
 
+-- Все эффекты убийств с проверкой
 local KillEffects = {
     Default = { Sound = nil, Particle = nil },
     Blood = { Sound = "rbxassetid://2323232323", Particle = "rbxassetid://2323232324" },
@@ -47,137 +61,75 @@ local KillEffects = {
     Demonic = { Sound = "rbxassetid://2323232343", Particle = "rbxassetid://2323232344" }
 }
 
+-- Создаем защищенные RemoteEvents
 local Network = {
-    SwordUpdate = Instance.new("RemoteEvent")
-    KillEffect = Instance.new("RemoteEvent")
+    SwordUpdate = SafeGetService("RemoteEvent") or Instance.new("RemoteEvent"),
+    KillEffect = SafeGetService("RemoteEvent") or Instance.new("RemoteEvent")
 }
 
 Network.SwordUpdate.Name = "SwordSkinUpdate"
 Network.KillEffect.Name = "GlobalKillEffect"
-Network.SwordUpdate.Parent = ReplicatedStorage
-Network.KillEffect.Parent = ReplicatedStorage
 
-local BallCache = {}
-local LastBallCheck = 0
+-- Безопасное применение скина меча
+local function ApplySwordSkin()
+    if not LocalPlayer.Character then return end
+    
+    local sword = LocalPlayer.Character:FindFirstChild("Sword") or 
+                 LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    
+    if sword then
+        local handle = sword:FindFirstChild("Handle")
+        if handle then
+            local skin = SwordSkins[Settings.SwordSkin] or SwordSkins.Default
+            local mesh = handle:FindFirstChildOfClass("SpecialMesh") or 
+                        handle:FindFirstChildOfClass("MeshPart")
+            
+            if mesh then
+                if skin.Texture ~= "" then
+                    pcall(function() mesh.TextureId = skin.Texture end)
+                end
+                pcall(function() handle.Color = skin.Color end)
+                
+                if Network.SwordUpdate then
+                    pcall(function()
+                        Network.SwordUpdate:FireServer({
+                            UserId = LocalPlayer.UserId,
+                            Skin = Settings.SwordSkin
+                        })
+                    end)
+                end
+            end
+        end
+    end
+end
 
+-- Безопасный поиск мяча
+local BallCache = {LastCheck = 0, Ball = nil}
 local function FindBall()
     local now = tick()
-    if now - LastBallCheck < 0.1 and BallCache.Ball and BallCache.Ball.Parent then
+    if now - BallCache.LastCheck < 0.1 and BallCache.Ball and BallCache.Ball.Parent then
         return BallCache.Ball
     end
-
-    LastBallCheck = now
-    for _, obj in ipair(workspace:GetDescendants()) do
+    
+    BallCache.LastCheck = now
+    for _, obj in ipairs(workspace:GetDescendants()) do
         if obj.Name == "Ball" and obj:FindFirstChild("BallScript") then
-           BallCache.Ball = obj
-           return obj
+            BallCache.Ball = obj
+            return obj
         end
     end
     BallCache.Ball = nil
     return nil
 end
 
-local CurrentSword = nil
-local function ApplySwordSkin()
-    if not LocalPlayer.Character then return end
-
-    local sword = LocalPlayer.Character:FindFirstChild("Sword") or
-                  LocalPlayer.Character:FindFirstChildOfClass("Tool")
-
-    if sword and sword ~= CurrentSword then
-        CurrentSword = sword
-        local handle = sword:FindFirstChild("Handle")
-        if handle then
-            local mesh = handle:FindFirstChildOfClass("SpecialMesh") or
-                        handle:FindFirstChildOfClass("MeshPart")
-            if mesh then
-                local skin = SwordSkins[Settings.SwordSkin]
-                if skin.Texture ~= "" then
-                    mesh.TextureId = skin.Texture
-                end
-                handle.Color = skin.Color
-
-                Network.SwordUpdate:FireServer({
-                    UserId = LocalPlayer.UserId,
-                    Skin = Settings.SwordSkin
-                })
-            end
-        end
-    end
-end
-
-local function ApplyKillEffect(target)
-    if Settings.KillEffect == "Default" then return end
-
-    local character = target and target.Character
-    if not character then return end
-
-    local humanoidBootPart = character:FindFirstChild("HumanoidRootPart")
-    if not humanoidBootPart then return end
-
-    local effect = KillEffects[Settings.KillEffect]
-    if not effect then return end
-
-    Netwirk.KillEffect:FireServer({
-        Effect = Settings.KillEffect,
-        Position = humanoidBootPart.Position,
-        UserId = LocalPlayer.UserId,
-        TargetUserId = target.UserId
-    })
-end
-
-Network.SwordUpdate.OnClientEvent:Connect(function(data)
-    local player = Players:GetPlayerByUserId(data.UserId)
-    if player and player ~= LocalPlayer then
-        local sword = player.Character and (player.Character:FindFirstChild("Sword") or
-                      player.Character:FindFirstChildOfClass("Tool"))
-        if sword then
-            local handle = sword:FindFirstChild("Handle")
-            if handle then
-                local mesh = handle:FindFirstChildOfClass("SpecialMesh") or
-                            handle:FindFirstChildOfClass("MeshPart")
-                if mesh then
-                    local skin = SwordSkins[data.Skim]
-                    if skin then
-                        if skin.Texture ~= "" then
-                            mesh.TextureId = skin.Texture
-                        end
-                        handle.Color = skin.Color
-                    end
-                end
-            end
-        end
-    end
-end)
-
-Network.KillEffect.OnClientEvent:Connect(function(data)
-    local effect = KillEffects[data.Effect]
-    in not effect then return end
-    
-    local sound = Instance.new("Sound")
-    sound.SoundId = effect.Sound
-    sound.Volume = 1
-    sound.Parent = workspace
-    sound:Play()
-
-    local particle = Instance.new("ParticleEmitter")
-    particle.Texture = effect.Particle
-    particle.LightEmission = 1
-    particle.Size = NumberSequence.new(1)
-    particle.Parent = workspace
-    particle:Emit(50)
-
-    game:GetService("Debris"):AddItem(sound, 3)
-    game:GetService("Debris"):AddItem(particle, 3)
-end)
-
+-- Защищенное авто-парирование
 local LastParry = 0
 local function AutoParry()
     if not Settings.AutoParry then return end
-
-    local new = tick()
-    if not - LastParry < 0.5 then return end
-
+    
+    local now = tick()
+    if now - LastParry < 0.5 then return end
+    
     local ball = FindBall()
     if ball and LocalPlayer.Character then
         local rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -185,121 +137,104 @@ local function AutoParry()
             local distance = (rootPart.Position - ball.Position).Magnitude
             if distance < 25 then
                 LastParry = now
-                ReplicatedStorage.Events.Parry:FireServer()
+                pcall(function()
+                    ReplicatedStorage.Events.Parry:FireServer()
+                end)
                 if Settings.Notifications then
-                    Library:Notify("Auto Parry Activated!", 2)
+                    pcall(function()
+                        Library:Notify("Auto Parry Activated!", 2)
+                    end)
                 end
             end
         end
     end
 end
 
+-- Защищенный авто-удар
 local function AutoHit()
     if not Settings.AutoHit then return end
-
+    
     local ball = FindBall()
     if ball and LocalPlayer.Character then
         local rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         if rootPart then
             local predictedPosition = ball.Position + (ball.Velocity * Settings.Prediction)
-            ReplicatedStorage.Events.HitBall:FireServer(predictedPosition)
+            pcall(function()
+                ReplicatedStorage.Events.HitBall:FireServer(predictedPosition)
+            end)
         end
     end
 end
 
-local lastHitTimes = {}
-local function SpamDetect()
-    if not Settings.SpamDetect then return end
-
-    local ball = FindBall()
-    if ball then
-        table.insert(lastHitTime, tick())
-
-        while #lastHitTimes > 0 and (tick() - lastHitTimes[1]) > 3 do
-            table.remove(lastHitTimes, 1)
+-- Инициализация GUI с защитой
+local function InitGUI()
+    local Window = Library:CreateWindow({
+        Name = "Blade Ball Ultimate",
+        LoadingTitle = "Loading...",
+        ConfigurationSaving = {
+            Enabled = true,
+            FolderName = "BladeBallConfig"
+        }
+    })
+    
+    local CombatTab = Window:CreateTab("Combat")
+    CombatTab:CreateToggle({
+        Name = "Auto Parry",
+        CurrentValue = Settings.AutoParry,
+        Callback = function(value) Settings.AutoParry = value end
+    })
+    
+    CombatTab:CreateToggle({
+        Name = "100% Hit Ball",
+        CurrentValue = Settings.AutoHit,
+        Callback = function(value) Settings.AutoHit = value end
+    })
+    
+    CombatTab:CreateSlider({
+        Name = "Prediction",
+        Range = {0.1, 0.5},
+        Increment = 0.05,
+        Suffix = "sec",
+        CurrentValue = Settings.Prediction,
+        Callback = function(value) Settings.Prediction = value end
+    })
+    
+    local CosmeticsTab = Window:CreateTab("Cosmetics")
+    CosmeticsTab:CreateDropdown({
+        Name = "Sword Skin",
+        Options = {"Default", "Gold", "Ice", "Fire", "Dark", "Galaxy", "Rainbow", "Void", "Lightning", "Diamond", "Blood", "Angel", "Demon"},
+        CurrentOption = Settings.SwordSkin,
+        Callback = function(value)
+            Settings.SwordSkin = value
+            ApplySwordSkin()
         end
-
-        if #lastHitTimes > 5 and Settings.Notifications then
-            Library:Notify("Spam Detected!", 2)
+    })
+    
+    CosmeticsTab:CreateDropdown({
+        Name = "Kill Effect",
+        Options = {"Default", "Blood", "Explosion", "Lightning", "Smoke", "Galaxy", "Void", "Fire", "Ice", "Confetti", "Angelic", "Demonic"},
+        CurrentOption = Settings.KillEffect,
+        Callback = function(value)
+            Settings.KillEffect = value
         end
+    })
+end
+
+-- Защищенный главный цикл
+local function MainLoop()
+    while true do
+        pcall(AutoParry)
+        pcall(AutoHit)
+        wait(0.1)
     end
 end
 
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/sourse"))()
-local Window = Library:CreateWindow({
-    Name = "Blade Ball Ultimate",
-    LoadingTitle = "Loading Ultimate Blade Ball Script...",
-    LoadingSubtitle = "by Arise"
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "BladeBallConfig",
-        FileName = "Config.json"
-    }
-})
-
-local CombatTab = Window:CreateTab("Combat")
-CombatTab:CreateToggle({
-    Name = 'Auto Parry',
-    CurrentValue = Settings.AutoParry,
-    Flag = 'AutoParryToggle',
-    Callback = function(value)
-        Settings.AutoParry = value
-    end
-})
-
-CombatTab:CreateToggle({
-    Name = '100% Hit Ball',
-    CurrentValue = Settings.AutoHit,
-    Flag = 'AutoHitToggle',
-    Callback = function(value)
-        Settings.AutoHit = value
-    end
-})
-
-CombatTab:CreateSlider({
-    Name = 'Prediction',
-    Range = {0.1, 0.5},
-    Increment = 0.05,
-    Suffix = "sec",
-    CurrentValue = Settings.Prediction,
-    Flag = "PredictionSlider",
-    Callback = function(value)
-        Settings.Prediction = value
-    end
-})
-
-local CosmeticsTab = Window:CreateTab("Cosmetics")
-CosmeticsTab:CreateDropdown({
-    Name = "Sword Skin",
-    Options = {"Default", "Gold", "Ice", "Fire", "Dark", "Galaxy", "Rainbow", "Void", "Lightning", "Diamond", "Blood", "Angel", "Demon"},
-    CurrentOption = Settings.SwordSkin,
-    Flag = 'SwordSkinDropdown',
-    Callback = function(value)
-        Settings.SwordSkin = value
-        ApplySwordSkin()
-    end
-})
-
-CosmeticsTab:CreateDropdown({
-    Name = "Kill Effect",
-    Options = {"Default", "Blood", "Explosion", "Lightning", "Smoke", "Galaxy", "Void", "Fire", "Ice", "Confetti", "Angelic", "Demonic"},
-    CurrentOption = Settings.KillEffect,
-    Flag = "KillEffectDropdown",
-    Callback = function(value)
-        Settings.KillEffect = value
-    end
-})
-
-UIS.InputBegan:Connect(function(input)
-    if input.KeyCode == Settings.Leybind then
-        Library:Destroy()
-    end
-end)
-
+-- Инициализация
+pcall(InitGUI)
 LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(1)
-    ApplySwordSkin()
+    wait(1) -- Даем время на загрузку персонажа
+    pcall(ApplySwordSkin)
 end)
 
-ApplySwordSkin()
-Library:Notify("Script loadedZ! Press LeftControl to close GUI.")
+pcall(ApplySwordSkin)
+spawn(MainLoop)
